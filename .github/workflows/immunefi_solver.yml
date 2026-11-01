@@ -1,0 +1,207 @@
+name: Immunefi DeFi Bug Bounty Auto-Solver Runner
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+jobs:
+  run-immunefi-solver:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Foundry (forge, cast, anvil)
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          cache: true
+
+      - name: Verify Foundry Installation
+        run: |
+          forge --version
+          cast --version
+          anvil --version
+
+      - name: Install SQLite CLI
+        run: |
+          choco install sqlite -y
+          sqlite3 --version
+
+      - name: Clone claude-autopilot (private)
+        run: |
+          git clone "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/tamilts124/claude-autopilot.git" webauto
+
+      - name: Clone immunefi-data (private)
+        run: |
+          git clone "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/tamilts124/immunefi-data.git" webauto/immunefi-data
+          New-Item -ItemType Directory -Force -Path "D:\ClaudeDir"
+          New-Item -ItemType Directory -Force -Path "D:\ClaudeDir\workspace"
+          New-Item -ItemType Junction -Path "D:\ClaudeDir\immunefi-data" -Target (Resolve-Path "webauto/immunefi-data").Path -Force
+
+      - name: Clone mcp-common-server
+        run: |
+          git clone "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/tamilts124/mcp-common-server.git" webauto/repos/mcp-common-server
+
+      - name: Restore Environment Files (.env)
+        env:
+          RAW_MCP_ENV: ${{ secrets.MCP_ENV }}
+          RAW_CLAUDE_ENV: ${{ secrets.CLAUDE_ENV }}
+        run: |
+          if ($env:RAW_MCP_ENV) {
+            [System.IO.File]::WriteAllText("webauto/repos/mcp-common-server/.env", $env:RAW_MCP_ENV, [System.Text.Encoding]::UTF8)
+            Write-Host "Restored webauto/repos/mcp-common-server/.env"
+          }
+          if ($env:RAW_CLAUDE_ENV) {
+            [System.IO.File]::WriteAllText("webauto/.env", $env:RAW_CLAUDE_ENV, [System.Text.Encoding]::UTF8)
+            Write-Host "Restored webauto/.env"
+          }
+          $dataAbs = (Resolve-Path "webauto/immunefi-data").Path.Replace("\", "/")
+          $webautoAbs = (Resolve-Path "webauto").Path.Replace("\", "/")
+          $roots = "$dataAbs,$webautoAbs,D:/ClaudeDir,D:/ClaudeDir/workspace"
+          $lines = Get-Content "webauto/repos/mcp-common-server/.env"
+          $hasRoots = $false
+          $newLines = $lines | ForEach-Object {
+            if ($_ -match '^\s*#?\s*MCP_ROOTS=') {
+              $hasRoots = $true
+              "MCP_ROOTS=$roots"
+            } else {
+              $_
+            }
+          }
+          if (-not $hasRoots) {
+            $newLines += "MCP_ROOTS=$roots"
+          }
+          $newLines += "MCP_ALLOW_EXEC=true"
+          $newLines += "MCP_READ_ONLY=false"
+          [System.IO.File]::WriteAllLines("webauto/repos/mcp-common-server/.env", $newLines, [System.Text.Encoding]::UTF8)
+          "MCP_ROOTS=$roots" >> $env:GITHUB_ENV
+          Write-Host "Configured MCP_ROOTS=$roots"
+
+      - name: Install Node Dependencies
+        working-directory: webauto/repos/mcp-common-server
+        run: |
+          npm install
+          npx playwright install chromium
+
+      - name: Install Python Dependencies
+        working-directory: webauto
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install curl_cffi requests beautifulsoup4
+          playwright install chromium
+
+      - name: Discover Fresh Immunefi Programs
+        working-directory: webauto/immunefi-data
+        run: |
+          python fetch_immunefi.py 30
+
+      - name: Run MCP Server and Immunefi Auto Solver
+        working-directory: webauto
+        env:
+          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+        run: |
+          Write-Host "Starting MCP Common Server on port 3000..."
+          $mcpProcess = Start-Process node -ArgumentList "server-http.js", "--category=email_database,execution_process,git,write_edit,read_file_system,browser_automation" -WorkingDirectory "repos/mcp-common-server" -PassThru -NoNewWindow
+          Write-Host "Started MCP server with PID: $($mcpProcess.Id)"
+
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 1
+            try {
+              $tcp = New-Object System.Net.Sockets.TcpClient("127.0.0.1", 3000)
+              if ($tcp.Connected) {
+                $tcp.Close()
+                Write-Host "MCP server is successfully listening on port 3000."
+                $ready = $true
+                break
+              }
+            } catch {}
+          }
+          if (-not $ready) {
+            Write-Error "MCP server did not start on port 3000 within 30 seconds."
+            exit 1
+          }
+
+          try {
+            python main.py --cookies-dir cookies_immunefi --delete-all-old-chats --reuse-cookies --no-reuse-cookies-exit --modal "sonnet 4.6" --model-thinking no --model-efficiency low --carry-last-responses 1 --session-loop --input .\prompts\immunefi_solver.txt --recursive --mcp-running-port 3000
+          } finally {
+            Write-Host "Stopping MCP server (PID: $($mcpProcess.Id))..."
+            Stop-Process -Id $mcpProcess.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Push Immunefi Data Updates to Private Repo
+        if: always()
+        run: |
+          if (Test-Path "webauto\immunefi-data\.git") {
+            cd webauto\immunefi-data
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            $status = git status --porcelain
+            if ($status) {
+              Write-Host "Detected changes in immunefi-data. Pushing to private repo..."
+              git commit -m "Auto-update immunefi.db & findings [skip ci]"
+              git pull --rebase "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/tamilts124/immunefi-data.git" main
+              git push "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/tamilts124/immunefi-data.git" HEAD:main
+              Write-Host "Successfully pushed updates to immunefi-data."
+            } else {
+              Write-Host "No changes in immunefi-data."
+            }
+          }
+
+      - name: Push Claude Autopilot Updates to Private Repo
+        if: always()
+        run: |
+          if (Test-Path "webauto\.git") {
+            cd webauto
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            $status = git status --porcelain
+            if ($status) {
+              Write-Host "Detected changes in claude-autopilot. Pushing to private repo..."
+              git commit -m "Auto-update session cookies and states [skip ci]"
+              git pull --rebase "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/tamilts124/claude-autopilot.git" main
+              git push "https://${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/tamilts124/claude-autopilot.git" HEAD:main
+              Write-Host "Successfully pushed updates to claude-autopilot."
+            } else {
+              Write-Host "No changes in claude-autopilot."
+            }
+          }
+
+      - name: Prepare Artifacts for Upload
+        if: always()
+        run: |
+          New-Item -ItemType Directory -Force -Path "run_output"
+          if (Test-Path "webauto/immunefi-data/immunefi.db") {
+            Copy-Item "webauto/immunefi-data/immunefi.db" -Destination "run_output/" -Force
+          }
+          if (Test-Path "webauto/immunefi-data/findings") {
+            Copy-Item "webauto/immunefi-data/findings" -Destination "run_output/findings" -Recurse -Force
+          }
+          if (Test-Path "webauto/chat_logs") {
+            Copy-Item "webauto/chat_logs" -Destination "run_output/chat_logs" -Recurse -Force
+          }
+          if (Test-Path "webauto/logs") {
+            Copy-Item "webauto/logs" -Destination "run_output/logs" -Recurse -Force
+          }
+
+      - name: Upload Logs & Database Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immunefi-run-artifacts
+          path: run_output/
+          if-no-files-found: ignore
