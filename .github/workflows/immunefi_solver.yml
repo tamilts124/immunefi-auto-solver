@@ -70,16 +70,23 @@ jobs:
           $roots = "$dataAbs,$webautoAbs,D:/ClaudeDir,D:/ClaudeDir/workspace"
           $lines = Get-Content "webauto/repos/mcp-common-server/.env"
           $hasRoots = $false
+          $hasPort = $false
           $newLines = $lines | ForEach-Object {
             if ($_ -match '^\s*#?\s*MCP_ROOTS=') {
               $hasRoots = $true
               "MCP_ROOTS=$roots"
+            } elseif ($_ -match '^\s*#?\s*PORT=') {
+              $hasPort = $true
+              "PORT=3000"
             } else {
               $_
             }
           }
           if (-not $hasRoots) {
             $newLines += "MCP_ROOTS=$roots"
+          }
+          if (-not $hasPort) {
+            $newLines += "PORT=3000"
           }
           $newLines += "MCP_ALLOW_EXEC=true"
           $newLines += "MCP_READ_ONLY=false"
@@ -205,3 +212,4 @@ jobs:
           name: immunefi-run-artifacts
           path: run_output/
           if-no-files-found: ignore
+
