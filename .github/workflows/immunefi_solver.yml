@@ -94,6 +94,16 @@ jobs:
           "MCP_ROOTS=$roots" >> $env:GITHUB_ENV
           Write-Host "Configured MCP_ROOTS=$roots"
 
+      - name: Cache Playwright Chromium & Pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\ms-playwright
+            ~\AppData\Local\pip\cache
+          key: ${{ runner.os }}-dependencies-v1
+          restore-keys: |
+            ${{ runner.os }}-dependencies-
+
       - name: Install Node Dependencies
         working-directory: webauto/repos/mcp-common-server
         run: |
