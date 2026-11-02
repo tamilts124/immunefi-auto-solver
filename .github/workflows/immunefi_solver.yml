@@ -188,28 +188,3 @@ jobs:
             }
           }
 
-      - name: Prepare Artifacts for Upload
-        if: always()
-        run: |
-          New-Item -ItemType Directory -Force -Path "run_output"
-          if (Test-Path "webauto/immunefi-data/immunefi.db") {
-            Copy-Item "webauto/immunefi-data/immunefi.db" -Destination "run_output/" -Force
-          }
-          if (Test-Path "webauto/immunefi-data/findings") {
-            Copy-Item "webauto/immunefi-data/findings" -Destination "run_output/findings" -Recurse -Force
-          }
-          if (Test-Path "webauto/chat_logs") {
-            Copy-Item "webauto/chat_logs" -Destination "run_output/chat_logs" -Recurse -Force
-          }
-          if (Test-Path "webauto/logs") {
-            Copy-Item "webauto/logs" -Destination "run_output/logs" -Recurse -Force
-          }
-
-      - name: Upload Logs & Database Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immunefi-run-artifacts
-          path: run_output/
-          if-no-files-found: ignore
-
