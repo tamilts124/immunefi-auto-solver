@@ -2,8 +2,8 @@ name: Immunefi DeFi Bug Bounty Auto-Solver Runner
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: '0 */6 * * *'
+  schedule:
+    - cron: '0 */6 * * *'
 
 concurrency:
   group: ${{ github.workflow }}
@@ -156,7 +156,7 @@ jobs:
           }
 
           try {
-            python main.py --cookies-dir cookies_immunefi --delete-all-old-chats --reuse-cookies --no-reuse-cookies-exit --modal "sonnet 4.6" --model-thinking no --model-efficiency low --carry-last-responses 1 --session-loop --input .\prompts\immunefi_solver.txt --recursive --mcp-running-port 3000
+            python main.py --cookies-dir cookies_immunefi --delete-all-old-chats --reuse-cookies --no-reuse-cookies-exit --modal "sonnet 4.6" --model-thinking no --model-efficiency low --carry-last-responses 1 --session-loop --input .\prompts\immunefi_solver.txt --recursive --mcp-running-port 3000 --tunnel pinggy
           } finally {
             Write-Host "Stopping MCP server (PID: $($mcpProcess.Id))..."
             Stop-Process -Id $mcpProcess.Id -Force -ErrorAction SilentlyContinue
